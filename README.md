@@ -29,7 +29,7 @@ The two phases share the dataset but not code: the Phase 1 model is not used by 
 
 For context, always predicting the largest class (Western Europe) scores about 24% on the test set.
 
-**Explainability.** SHAP (TreeExplainer, per-class importance) and LIME (single-prediction explanations) were applied to the Random Forest; value-for-money, facilities and location scores were the strongest signals. An `infer_country_group()` helper preprocesses raw inputs and returns the predicted region with its class probability.
+**Explainability.** SHAP (TreeExplainer, per-class importance) and LIME (single-prediction explanations) were applied to the Random Forest. Facilities and location scores ranked near the top in both the forest's built-in feature importance (led by value-for-money) and SHAP (led by the overall score); demographics mattered much less. An `infer_country_group()` helper preprocesses raw inputs and returns the predicted region with its class probability.
 
 **Files:** `team03-ms1-acl.ipynb` (full pipeline), `team03-ms1-acl_report.pdf` (write-up), `merged_hotel_reviews.csv` (merged dataset). The notebook reads the raw CSVs from `/kaggle/input/international-hotel-booking-analytics/`; change those paths to run it locally.
 
