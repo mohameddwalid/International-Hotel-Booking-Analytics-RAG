@@ -1,0 +1,12 @@
+pandas
+numpy
+neo4j
+spacy
+sentence-transformers
+faiss-cpu
+huggingface_hub
+streamlit
+networkx
+plotly
+matplotlib
+seaborn

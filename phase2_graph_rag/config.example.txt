@@ -1,0 +1,4 @@
+URI=neo4j+s://<your-instance>.databases.neo4j.io
+USERNAME=neo4j
+PASSWORD=<your-neo4j-password>
+HF_TOKEN=<your-hugging-face-token>
