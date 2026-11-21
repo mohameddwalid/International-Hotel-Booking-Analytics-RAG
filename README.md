@@ -1,89 +1,103 @@
-# 🏨 International Hotel Booking Analytics
+# 🏨 International Hotel Booking Analytics & Graph-RAG Travel Assistant
 
-Can you tell where a hotel is located just from how guests rated it? This project puts that to the test — predicting a hotel's world region from review scores and traveler demographics, no location data allowed.
+A university team project (German University in Cairo, ACL course, team of 4, Oct–Dec 2025) built in two phases on the same Kaggle hotel-booking dataset (`international-hotel-booking-analytics`: hotels, users, reviews):
 
-Built on 50K merged hotel/user/review records from Kaggle, with three models compared head-to-head and a live inference function at the end.
-
-## What's inside
-
-- End-to-end cleaning pipeline for a 3-table merge (hotels + users + reviews)
-- Two quick data-viz questions (best city per traveler type, best value-for-money by age group)
-- Five modeling experiments — Logistic Regression, Random Forest, and a small neural net — run under different feature sets to see what's actually predictive vs. what's just leaking the answer
-- SHAP + LIME explainability on the winning model
-- A ready-to-call function that takes a new review and returns a predicted region with a confidence score
-
-## The catch: data leakage
-
-The first pass at this hit **98% test accuracy** with a neural net — which sounds great until you notice it's cheating. The hotel-level "baseline" score columns (`cleanliness_base`, `staff_base`, etc.) are basically a fingerprint for each individual hotel, so the model was learning to recognize *hotels*, not regions.
-
-Strip those out and accuracy drops to a much more honest **~37–40%** across the remaining models — still well above the ~9% you'd get guessing randomly across 11 regions, but a realistic signal rather than an illusion.
-
-| Model | Features | Test Accuracy | Verdict |
+| Phase | Question | What we built | Folder |
 |---|---|---|---|
-| FFNN | scores + demographics + hotel baselines | 98.0% | 🚩 leaks hotel identity |
-| Logistic Regression | scores + demographics | 34.5% | weak, poor per-class balance |
-| FFNN | scores + demographics | 29.8% | collapses to one dominant class |
-| FFNN | scores + demographics + deltas | 40.7% | better, still uneven across classes |
-| **Random Forest** | scores + demographics | **37.0%** | ✅ most balanced, chosen model |
+| **1. Machine learning** | Can a hotel's world region be predicted from how guests rated it? | Cleaning + EDA pipeline, five model experiments, a data-leakage investigation, SHAP/LIME explanations | [`phase1_ml/`](phase1_ml) |
+| **2. Graph-RAG assistant** | Can travellers ask hotel questions in plain English? | Neo4j knowledge graph, intent + entity extraction, Cypher and FAISS retrieval, three Hugging Face LLMs, Streamlit chat app | [`phase2_graph_rag/`](phase2_graph_rag) |
 
-The Random Forest is the model we'd actually ship — it doesn't touch the leaking hotel-baseline features and holds up reasonably evenly across all 11 regions. `score_value_for_money`, `score_facilities`, and `score_location` come out as the top predictors, confirmed independently by both feature importances and SHAP.
+The two phases share the dataset but not code: the Phase 1 model is not used by the Phase 2 assistant.
 
-## Quick answers along the way
+---
 
-- **Best city by traveler type:** Dubai wins for Business and Family travelers; Amsterdam wins for Solo and Couples.
-- **Best value-for-money by age group:** China and the Netherlands show up near the top for almost every age bracket.
+## Phase 1 – Predicting a hotel's region from review scores
 
-## Try it yourself
+**Data.** Reviews were left-joined to hotels (`hotel_id`) and users (`user_id`), giving **50,000 rows × 29 columns** (25 hotels, one per country; 2,000 users). Checks covered nulls, duplicates, constant columns, category spelling and score ranges. Countries were mapped to **11 regions** as the prediction target. Gender was label-encoded; age group and traveller type were one-hot encoded.
 
-```python
-infer_country_group({
-    "score_overall": 8.7,
-    "score_cleanliness": 9.0,
-    "score_comfort": 9.2,
-    "score_facilities": 8.8,
-    "score_location": 8.6,
-    "score_staff": 8.5,
-    "score_value_for_money": 8.2,
-    "user_gender": "Female",
-    "age": 39,
-    "traveller_type": "Family",
-})
-# → Predicted region: North America (Mexico), confidence 58.6%
+**Data leakage.** Each hotel carries six fixed "baseline" scores (`cleanliness_base`, `staff_base`, …). Because there is only one hotel per country, these values act as a fingerprint: hotel → country → region. Models given these columns (directly, or indirectly through `score − base` deltas) learn to recognise hotels rather than regions, so their accuracy is not a fair measure.
+
+**Results** (stratified 80/20 split, saved notebook outputs):
+
+| # | Model | Features | Test accuracy | Notes |
+|---|---|---|---|---|
+| 1 | Feed-forward NN (32→16) | scores + demographics + **hotel baselines** | 65.2% | leaks hotel identity (an earlier run was reported at 98%) |
+| 2 | Logistic Regression | scores + demographics | 34.5% | weak per-class balance |
+| 3 | Feed-forward NN | scores + demographics | 30.2% | collapses towards the majority class |
+| 4 | Feed-forward NN | scores + demographics + **deltas** | 61.2% | deltas re-introduce the baselines |
+| 5 | **Random Forest** (600 trees, balanced class weights) | scores + demographics | **37.4%** (macro F1 0.31) | chosen model |
+
+For context, always predicting the largest class (Western Europe) scores about 24% on the test set.
+
+**Explainability.** SHAP (TreeExplainer, per-class importance) and LIME (single-prediction explanations) were applied to the Random Forest; value-for-money, facilities and location scores were the strongest signals. An `infer_country_group()` helper preprocesses raw inputs and returns the predicted region with its class probability.
+
+**Files:** `team03-ms1-acl.ipynb` (full pipeline), `team03-ms1-acl_report.pdf` (write-up), `merged_hotel_reviews.csv` (merged dataset). The notebook reads the raw CSVs from `/kaggle/input/international-hotel-booking-analytics/`; change those paths to run it locally.
+
+---
+
+## Phase 2 – Graph-RAG travel assistant
+
+```
+question ─► intent classifier (rules) + entity extractor (spaCy + regex)
+   ├─► graph retrieval: parameterised Cypher templates ─► Neo4j
+   └─► semantic retrieval: Sentence-Transformers ─► FAISS
+   ─► merge + de-duplicate context ─► structured prompt ─► LLM (Hugging Face) ─► Streamlit UI
 ```
 
-The function handles all the preprocessing internally — encoding, one-hot columns, delta calculation — so you can feed it raw review inputs directly.
+- **Knowledge graph** (`Create_kg.py`): Traveller, Hotel, City, Country, Continent and Review nodes; `WROTE`, `STAYED_AT`, `REVIEWED`, `FROM_COUNTRY`, `LOCATED_IN`, `PART_OF` and `NEEDS_VISA` (between countries) relationships. Loaded in batches with `UNWIND` + `MERGE`, with uniqueness constraints.
+- **Query understanding** (`intent_classifier.py`, `entity_extractor.py`): keyword rules choose one of four intents (hotel search, review lookup, visa info, traveller lookup); spaCy NER and regex extract cities, continents, hotels, years, demographics, amenities and score metrics.
+- **Graph retrieval** (`baseline_retrieval.py`): the intent and entities select one of a set of pre-written, parameterised Cypher queries.
+- **Semantic retrieval** (`embedding_retrieval.py`): review texts embedded with `all-MiniLM-L6-v2` or `all-mpnet-base-v2` and searched with a FAISS `IndexFlatL2` index (top 5). The original Kaggle review texts are synthetic filler, so the team added 505 hand-written reviews (IDs 50001–50505) for semantic search; the team also added an `amenity` column to `hotels.csv`.
+- **Generation** (`llm_layer.py`): graph and semantic results are merged and de-duplicated into one context block, wrapped in a persona / context / task prompt with grounding rules, and sent to `google/gemma-2-2b-it`, `mistralai/Mistral-7B-Instruct-v0.2` or `meta-llama/Llama-3.2-3B-Instruct` via the Hugging Face Inference API.
+- **Evaluation** (`quantitative_comparison.py`, `queries.txt`): the three LLMs compared on a set of test questions (response time, token usage, success and answer quality).
+- **App** (`app.py`): Streamlit chat with a choice of retrieval mode (hybrid / graph only / semantic only), LLM and embedding model; shows the retrieved context, executed Cypher and an interactive graph view (NetworkX + Plotly).
 
-## Project layout
+Course specifications are in [`phase2_graph_rag/docs/`](phase2_graph_rag/docs).
+
+### Running Phase 2
+
+```bash
+cd phase2_graph_rag
+python -m venv .venv && .venv\Scripts\activate      # macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+
+cp config.example.txt config.txt     # fill in your Neo4j URI/credentials and Hugging Face token
+python Create_kg.py                  # build the knowledge graph (once)
+streamlit run app.py
+```
+
+The Hugging Face token is read from the `HF_TOKEN` environment variable, falling back to `config.txt`. `config.txt` is git-ignored; never commit real credentials.
+
+---
+
+## Repository layout
 
 ```
 .
-├── team03-ms1-acl.ipynb          # full pipeline: cleaning → EDA → modeling → explainability → inference
-├── team03-ms1-acl_report.pdf     # write-up with detailed methodology and charts
+├── phase1_ml/
+│   ├── team03-ms1-acl.ipynb
+│   ├── team03-ms1-acl_report.pdf
+│   ├── merged_hotel_reviews.csv
+│   └── requirements.txt
+├── phase2_graph_rag/
+│   ├── app.py                    # Streamlit UI
+│   ├── Create_kg.py              # Neo4j ETL
+│   ├── intent_classifier.py / entity_extractor.py
+│   ├── baseline_retrieval.py     # Cypher templates
+│   ├── embedding_retrieval.py    # Sentence-Transformers + FAISS
+│   ├── llm_layer.py              # context merge, prompt, LLM calls
+│   ├── step3.py / quantitative_comparison.py / test_llm_integration.py
+│   ├── hotels.csv / users.csv / reviews.csv / visa.csv
+│   ├── queries.txt / rule.txt
+│   ├── config.example.txt
+│   ├── requirements.txt
+│   └── docs/                     # course milestone specifications
 └── README.md
 ```
 
-Everything currently lives in one notebook. Data comes from the Kaggle dataset `international-hotel-booking-analytics` (`hotels.csv`, `users.csv`, `reviews.csv`), originally read from `/kaggle/input/...`.
+## Possible next steps
 
-## Running it locally
-
-```bash
-git clone https://github.com/<org>/<repo>.git
-cd <repo>
-
-python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-
-# grab hotels.csv, users.csv, reviews.csv from Kaggle, drop them in a data/ folder,
-# then swap the /kaggle/input/... paths in the notebook for your local data/ path
-
-jupyter notebook team03-ms1-acl.ipynb
-```
-
-Built with Python 3.11. Main dependencies: `pandas`, `numpy`, `scikit-learn`, `tensorflow`, `matplotlib`, `seaborn`, `missingno`, `shap`, `lime`.
-
-## Where this could go next
-
-- Pull signal out of `review_text` instead of relying on structured scores alone
-- Try XGBoost/LightGBM as a stronger drop-in for the Random Forest
-- Group regions hierarchically (continent → sub-region) so classes are less imbalanced
-- Rebalance training with SMOTE or class-weighted loss for the weaker classes
+- Group-aware evaluation (e.g. hold out whole hotels) to measure generalisation to unseen hotels.
+- Rank-based fusion of graph and semantic results instead of simple concatenation.
+- A labelled question set with automated answer scoring for the LLM comparison.

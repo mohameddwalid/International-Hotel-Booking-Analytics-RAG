@@ -1,0 +1,23 @@
+# Secrets (copy phase2_graph_rag/config.example.txt to config.txt locally)
+config.txt
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS / editor clutter
+.DS_Store
+__MACOSX/
+.vscode/
+
+# Leftover local copy of the Phase 2 folder
+ACL_MS3/
+
+# Personal CV material (kept local only)
+Hotel_Analytics_GraphRAG_CV_Summary.pdf
+hotel_analytics_cv_summary.html
+hotel_analytics_cv_summary.pdf
